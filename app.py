@@ -4,13 +4,13 @@ import fitz  # PyMuPDF
 import google.generativeai as genai
 import faiss
 import numpy as np
-from openai import OpenAI
+import cohere
 
 # ------------------- Configuration ------------------- #
 # Get API keys from Streamlit secrets
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+    COHERE_API_KEY = st.secrets["COHERE_API_KEY"]
 except KeyError as e:
     st.error(f"Missing API key in secrets: {e}")
     st.stop()
@@ -18,24 +18,24 @@ except KeyError as e:
 genai.configure(api_key=GEMINI_API_KEY)
 
 @st.cache_resource
-def load_openai_client():
-    return OpenAI(api_key=OPENAI_API_KEY)
+def load_cohere_client():
+    return cohere.Client(COHERE_API_KEY)
 
-openai_client = load_openai_client()
+cohere_client = load_cohere_client()
 
 # ------------------- Embedding Functions ------------------- #
 def get_embeddings(texts):
-    """Get embeddings using OpenAI's text-embedding-3-small model"""
+    """Get embeddings using Cohere's embed model"""
     if isinstance(texts, str):
         texts = [texts]
     
-    response = openai_client.embeddings.create(
-        model="text-embedding-3-small",
-        input=texts
+    response = cohere_client.embed(
+        texts=texts,
+        model="embed-english-light-v3.0",
+        input_type="search_document"
     )
     
-    embeddings = [data.embedding for data in response.data]
-    return np.array(embeddings, dtype=np.float32)
+    return np.array(response.embeddings, dtype=np.float32)
 
 # ------------------- PDF Processing ------------------- #
 @st.cache_data(show_spinner="📖 Extracting text...")
