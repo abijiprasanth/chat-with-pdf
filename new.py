@@ -72,22 +72,65 @@ tokenizer, embedding_model = load_embedding_model()
 @st.cache_data(show_spinner="📖 Extracting text...")
 def extract_text_cached(file_bytes):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    return text
+    full_text = ""
+    total_pages = len(doc)
+    
+    # Extract text from each page
+    for page_num in range(total_pages):
+        page = doc[page_num]
+        page_text = page.get_text()
+        
+        # Add page separator and text
+        if page_text.strip():  # Only add if page has content
+            full_text += f"\n--- PAGE {page_num + 1} ---\n"
+            full_text += page_text + "\n"
+    
+    doc.close()
+    return full_text, total_pages
 
-def chunk_text(text, max_chars=500):
-    paragraphs = text.split("\n")
-    chunks, current = [], ""
+def chunk_text(text, max_chars=1000, overlap=100):
+    """
+    Create overlapping chunks to ensure no information is lost
+    """
+    # Split by paragraphs first
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+    
+    chunks = []
+    current_chunk = ""
+    
     for para in paragraphs:
-        if len(current) + len(para) < max_chars:
-            current += para + "\n"
+        # If adding this paragraph would exceed max_chars
+        if len(current_chunk) + len(para) + 1 > max_chars:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                
+                # Create overlap: keep last part of current chunk
+                overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
+                current_chunk = overlap_text + "\n" + para
+            else:
+                # If single paragraph is too long, split it
+                if len(para) > max_chars:
+                    words = para.split()
+                    temp_chunk = ""
+                    for word in words:
+                        if len(temp_chunk) + len(word) + 1 <= max_chars:
+                            temp_chunk += word + " "
+                        else:
+                            chunks.append(temp_chunk.strip())
+                            temp_chunk = word + " "
+                    current_chunk = temp_chunk
+                else:
+                    current_chunk = para
         else:
-            chunks.append(current.strip())
-            current = para + "\n"
-    if current:
-        chunks.append(current.strip())
+            current_chunk += "\n" + para if current_chunk else para
+    
+    # Add the last chunk
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    
+    # Remove empty chunks
+    chunks = [chunk for chunk in chunks if chunk.strip()]
+    
     return chunks
 
 @st.cache_data(show_spinner="📐 Creating embeddings...")
@@ -95,29 +138,41 @@ def embed_chunks(chunks):
     vectors = encode_texts(chunks, tokenizer, embedding_model)
     return vectors.astype("float32")
 
-def search_chunks(query, chunks, chunk_vectors, k=3):
+def search_chunks(query, chunks, chunk_vectors, k=5):
+    """
+    Search for relevant chunks - increased k to get more context
+    """
     query_vec = encode_texts([query], tokenizer, embedding_model).astype("float32")
     index = faiss.IndexFlatL2(chunk_vectors.shape[1])
     index.add(chunk_vectors)
     _, indices = index.search(query_vec, k)
-    return [chunks[i] for i in indices[0]]
+    
+    relevant_chunks = [chunks[i] for i in indices[0]]
+    return relevant_chunks
 
 def ask_gemini_stream(history, context_chunks, new_question):
     context = "\n\n".join(context_chunks)
-    chat = "\n".join(history)
-    prompt = f"""You are a helpful assistant answering questions about the uploaded PDF. Use the context and prior conversation.
+    chat = "\n".join(history[-10:])  # Keep last 10 messages for context
+    
+    prompt = f"""You are a helpful AI assistant answering questions about the uploaded PDF document. Use the provided context from the document and the conversation history to give accurate, detailed answers.
 
-PDF Context:
-\"\"\"
+DOCUMENT CONTEXT:
 {context}
-\"\"\"
 
-Conversation:
+CONVERSATION HISTORY:
 {chat}
 
-Q: {new_question}
-A:"""
-    model = genai.GenerativeModel("gemini-2.0-flash")  # Or "gemini-pro"
+INSTRUCTIONS:
+- Base your answer primarily on the document content provided
+- If the answer isn't in the provided context, say so clearly
+- Be specific and cite relevant parts when possible
+- If asked about the entire document, use your knowledge from all the chunks processed
+
+QUESTION: {new_question}
+
+ANSWER:"""
+
+    model = genai.GenerativeModel("gemini-2.0-flash")
     stream = model.generate_content(prompt, stream=True)
     return stream
 
@@ -150,17 +205,28 @@ if "pdf_chunks" not in st.session_state:
 if "chunk_vectors" not in st.session_state:
     st.session_state.chunk_vectors = None
 
+if "total_pages" not in st.session_state:
+    st.session_state.total_pages = 0
+
 # Process PDF
 if uploaded_file and st.session_state.pdf_chunks is None:
     file_bytes = uploaded_file.read()
-    text = extract_text_cached(file_bytes)
+    text, total_pages = extract_text_cached(file_bytes)
+    
     if not text.strip():
         st.warning("❌ The PDF has no readable text.")
         st.stop()
+    
+    # Show document statistics
+    st.sidebar.info(f"📄 **Document Info:**\n- Pages: {total_pages}\n- Characters: {len(text):,}\n- Words: ~{len(text.split()):,}")
+    
     chunks = chunk_text(text)
+    st.sidebar.info(f"📝 Created {len(chunks)} text chunks")
+    
     vectors = embed_chunks(chunks)
     st.session_state.pdf_chunks = chunks
     st.session_state.chunk_vectors = vectors
+    st.session_state.total_pages = total_pages
     st.sidebar.success("✅ PDF processed!")
 
 # Main Chat Area
@@ -175,13 +241,18 @@ for entry in st.session_state.chat_history:
 
 # Chat input and handling
 if st.session_state.pdf_chunks:
+    # Show document stats in main area
+    if st.session_state.total_pages > 0:
+        st.info(f"📚 Document loaded: {st.session_state.total_pages} pages, {len(st.session_state.pdf_chunks)} chunks available for search")
+    
     user_input = st.chat_input("Ask something about the PDF...")
 
     if user_input:
         st.chat_message("user").write(user_input)
         st.session_state.chat_history.append(f"Q: {user_input}")
 
-        top_chunks = search_chunks(user_input, st.session_state.pdf_chunks, st.session_state.chunk_vectors)
+        # Get more relevant chunks for better coverage
+        top_chunks = search_chunks(user_input, st.session_state.pdf_chunks, st.session_state.chunk_vectors, k=5)
 
         with st.chat_message("assistant"):
             response_container = st.empty()
