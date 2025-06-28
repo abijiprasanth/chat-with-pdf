@@ -2,6 +2,6 @@ streamlit
 PyMuPDF
 google-generativeai==0.8.5
 sentence-transformers==2.2.2
-faiss-cpu==1.7.4
-numpy
+faiss-cpu==1.7.4.post2
 python-dotenv
+numpy
