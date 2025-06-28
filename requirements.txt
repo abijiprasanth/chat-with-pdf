@@ -1,6 +1,8 @@
 streamlit
+torch --index-url https://download.pytorch.org/whl/cpu
+transformers
 PyMuPDF
-google-generativeai==0.8.5
+google-generativeai
+faiss-cpu
+python-dotenv
 numpy
-sentence-transformers==2.2.2
-
