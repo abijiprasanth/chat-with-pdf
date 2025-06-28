@@ -1,8 +1,8 @@
 streamlit
 PyMuPDF
 google-generativeai==0.8.5
+numpy
+scikit-learn
 torch
 transformers
-scikit-learn
-python-dotenv
-numpy
+sentence-transformers==2.2.2
