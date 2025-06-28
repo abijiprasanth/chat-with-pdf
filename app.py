@@ -1,5 +1,5 @@
 import os
-from transformers import AutoTokenizer, AutoModel
+
 from sentence_transformers import SentenceTransformer
 import streamlit as st
 import fitz  # PyMuPDF
