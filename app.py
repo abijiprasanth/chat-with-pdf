@@ -4,38 +4,69 @@ import fitz  # PyMuPDF
 import google.generativeai as genai
 import faiss
 import numpy as np
-import cohere
+from dotenv import load_dotenv
+import torch
+from transformers import AutoTokenizer, AutoModel
+import torch.nn.functional as F
 
 # ------------------- Configuration ------------------- #
-# Get API keys from Streamlit secrets
+load_dotenv()
+
+# Try to get API key from Streamlit secrets first, then from environment
 try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    COHERE_API_KEY = st.secrets["COHERE_API_KEY"]
-except KeyError as e:
-    st.error(f"Missing API key in secrets: {e}")
-    st.stop()
+    GEMINI_API_KEY = st.secrets["google_key"]
+except:
+    GEMINI_API_KEY = os.getenv("google_key")
+
+# If no API key found, ask user to input it
+if not GEMINI_API_KEY:
+    st.sidebar.header("🔑 API Configuration")
+    GEMINI_API_KEY = st.sidebar.text_input(
+        "Enter your Google API Key:", 
+        type="password",
+        help="Get your API key from Google AI Studio"
+    )
+    
+    if not GEMINI_API_KEY:
+        st.error("🔑 Please enter your Google API key in the sidebar to continue")
+        st.info("💡 Get your free API key from: https://makersuite.google.com/app/apikey")
+        st.stop()
 
 genai.configure(api_key=GEMINI_API_KEY)
 
 @st.cache_resource
-def load_cohere_client():
-    return cohere.Client(COHERE_API_KEY)
+def load_embedding_model():
+    """Load the embedding model and tokenizer"""
+    model_name = 'sentence-transformers/paraphrase-MiniLM-L3-v2'
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModel.from_pretrained(model_name)
+    return tokenizer, model
 
-cohere_client = load_cohere_client()
+def mean_pooling(model_output, attention_mask):
+    """Mean pooling to get sentence embeddings"""
+    token_embeddings = model_output[0]
+    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
-# ------------------- Embedding Functions ------------------- #
-def get_embeddings(texts):
-    """Get embeddings using Cohere's embed model"""
-    if isinstance(texts, str):
-        texts = [texts]
+def encode_texts(texts, tokenizer, model, max_length=512):
+    """Encode texts to embeddings"""
+    # Tokenize sentences
+    encoded_input = tokenizer(texts, padding=True, truncation=True, max_length=max_length, return_tensors='pt')
     
-    response = cohere_client.embed(
-        texts=texts,
-        model="embed-english-light-v3.0",
-        input_type="search_document"
-    )
+    # Compute token embeddings
+    with torch.no_grad():
+        model_output = model(**encoded_input)
     
-    return np.array(response.embeddings, dtype=np.float32)
+    # Perform pooling
+    sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
+    
+    # Normalize embeddings
+    sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
+    
+    return sentence_embeddings.numpy()
+
+# Load models once
+tokenizer, embedding_model = load_embedding_model()
 
 # ------------------- PDF Processing ------------------- #
 @st.cache_data(show_spinner="📖 Extracting text...")
@@ -61,11 +92,11 @@ def chunk_text(text, max_chars=500):
 
 @st.cache_data(show_spinner="📐 Creating embeddings...")
 def embed_chunks(chunks):
-    vectors = get_embeddings(chunks)
-    return vectors
+    vectors = encode_texts(chunks, tokenizer, embedding_model)
+    return vectors.astype("float32")
 
 def search_chunks(query, chunks, chunk_vectors, k=3):
-    query_vec = get_embeddings([query])
+    query_vec = encode_texts([query], tokenizer, embedding_model).astype("float32")
     index = faiss.IndexFlatL2(chunk_vectors.shape[1])
     index.add(chunk_vectors)
     _, indices = index.search(query_vec, k)
@@ -91,7 +122,7 @@ A:"""
     return stream
 
 # ------------------- Streamlit App ------------------- #
-st.set_page_config(page_title="Chat With PDF", layout="wide")
+st.set_page_config(page_title="Chat With Pdf", layout="wide")
 
 # Sidebar – Upload, Clear Chat
 st.sidebar.title("📁 Upload & Analyze")
