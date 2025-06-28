@@ -6,3 +6,4 @@ scikit-learn
 torch
 transformers
 sentence-transformers==2.2.2
+sentencepiece==0.1.99
