@@ -1,8 +1,9 @@
 import os
+from transformers import AutoTokenizer, AutoModel
+from sentence_transformers import SentenceTransformer
 import streamlit as st
 import fitz  # PyMuPDF
 import google.generativeai as genai
-from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 from dotenv import load_dotenv
