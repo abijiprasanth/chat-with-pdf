@@ -1,6 +1,6 @@
 streamlit
 PyMuPDF
 google-generativeai==0.8.5
-sentence-transformers==2.2.2
+
 python-dotenv
 numpy
