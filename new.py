@@ -11,7 +11,27 @@ import torch.nn.functional as F
 
 # ------------------- Configuration ------------------- #
 load_dotenv()
-GEMINI_API_KEY = os.getenv("google_key")  # 🔁 Replace this
+
+# Try to get API key from Streamlit secrets first, then from environment
+try:
+    GEMINI_API_KEY = st.secrets["google_key"]
+except:
+    GEMINI_API_KEY = os.getenv("google_key")
+
+# If no API key found, ask user to input it
+if not GEMINI_API_KEY:
+    st.sidebar.header("🔑 API Configuration")
+    GEMINI_API_KEY = st.sidebar.text_input(
+        "Enter your Google API Key:", 
+        type="password",
+        help="Get your API key from Google AI Studio"
+    )
+    
+    if not GEMINI_API_KEY:
+        st.error("🔑 Please enter your Google API key in the sidebar to continue")
+        st.info("💡 Get your free API key from: https://makersuite.google.com/app/apikey")
+        st.stop()
+
 genai.configure(api_key=GEMINI_API_KEY)
 
 @st.cache_resource
