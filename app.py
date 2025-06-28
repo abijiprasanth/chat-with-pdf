@@ -1,23 +1,41 @@
 import os
-
-from sentence_transformers import SentenceTransformer
 import streamlit as st
 import fitz  # PyMuPDF
 import google.generativeai as genai
 import faiss
 import numpy as np
-from dotenv import load_dotenv
-import os
+from openai import OpenAI
+
 # ------------------- Configuration ------------------- #
-load_dotenv()
-GEMINI_API_KEY = os.getenv("google_key")  # 🔁 Replace this
+# Get API keys from Streamlit secrets
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+except KeyError as e:
+    st.error(f"Missing API key in secrets: {e}")
+    st.stop()
+
 genai.configure(api_key=GEMINI_API_KEY)
 
 @st.cache_resource
-def load_embedding_model():
-    return SentenceTransformer('paraphrase-MiniLM-L3-v2')
+def load_openai_client():
+    return OpenAI(api_key=OPENAI_API_KEY)
 
-embedding_model = load_embedding_model()
+openai_client = load_openai_client()
+
+# ------------------- Embedding Functions ------------------- #
+def get_embeddings(texts):
+    """Get embeddings using OpenAI's text-embedding-3-small model"""
+    if isinstance(texts, str):
+        texts = [texts]
+    
+    response = openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=texts
+    )
+    
+    embeddings = [data.embedding for data in response.data]
+    return np.array(embeddings, dtype=np.float32)
 
 # ------------------- PDF Processing ------------------- #
 @st.cache_data(show_spinner="📖 Extracting text...")
@@ -43,11 +61,11 @@ def chunk_text(text, max_chars=500):
 
 @st.cache_data(show_spinner="📐 Creating embeddings...")
 def embed_chunks(chunks):
-    vectors = embedding_model.encode(chunks)
-    return np.array(vectors).astype("float32")
+    vectors = get_embeddings(chunks)
+    return vectors
 
 def search_chunks(query, chunks, chunk_vectors, k=3):
-    query_vec = embedding_model.encode([query]).astype("float32")
+    query_vec = get_embeddings([query])
     index = faiss.IndexFlatL2(chunk_vectors.shape[1])
     index.add(chunk_vectors)
     _, indices = index.search(query_vec, k)
@@ -73,7 +91,7 @@ A:"""
     return stream
 
 # ------------------- Streamlit App ------------------- #
-st.set_page_config(page_title="Chat With Pdf", layout="wide")
+st.set_page_config(page_title="Chat With PDF", layout="wide")
 
 # Sidebar – Upload, Clear Chat
 st.sidebar.title("📁 Upload & Analyze")
