@@ -1,4 +1,1 @@
-cmake
-pkg-config
-swig
-build-essential
+
